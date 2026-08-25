@@ -1,7 +1,7 @@
 // خدمة ضغط الصور — لرفع إشعارات التحويل
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter_image_compress/flutter_image_compress.dart';
+import 'package:flutter_image_compress_lite/flutter_image_compress_lite.dart';
 
 class ImageService {
   /// ضغط صورة إلى base64 data URL صالح لـ Firestore
