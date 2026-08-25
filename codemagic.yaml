@@ -9,230 +9,113 @@ workflows:
     scripts:
       - name: Recreate Android folder
         script: |
-          # حفظ الملفات المهمة
           cp android/app/google-services.json /tmp/google-services.json
-
-          # حذف مجلد android القديم
           rm -rf android
-
-          # إعادة إنشاء مجلد android بالإعدادات الحديثة
           flutter create --platforms=android --org com.takweela --project-name takweela .
-
-          # إعادة ملف google-services.json
           cp /tmp/google-services.json android/app/google-services.json
 
-      - name: Configure Android project
+      - name: Patch Android config files
         script: |
-          # تحديد نوع ملف settings
-          if [ -f "android/settings.gradle.kts" ]; then
-            SETTINGS_FILE="android/settings.gradle.kts"
-            echo "Found Kotlin DSL settings file"
-          elif [ -f "android/settings.gradle" ]; then
-            SETTINGS_FILE="android/settings.gradle"
-            echo "Found Groovy settings file"
-          else
-            echo "ERROR: No settings.gradle file found!"
-            ls -la android/
-            exit 1
-          fi
+          python3 << 'PYEOF'
+          import os, re, glob
 
-          echo "Settings file: $SETTINGS_FILE"
+          # === 1. Find and patch build.gradle(.kts) ===
+          build_files = glob.glob("android/app/build.gradle*")
+          if not build_files:
+              print("ERROR: No build.gradle found!")
+              exit(1)
 
-          # تحديد نوع build.gradle
-          if [ -f "android/app/build.gradle.kts" ]; then
-            BUILD_FILE="android/app/build.gradle.kts"
-            echo "Found Kotlin DSL build file"
+          build_file = build_files[0]
+          print(f"Patching: {build_file}")
+          content = open(build_file).read()
 
-            cat > "$BUILD_FILE" << 'BUILDKTS'
-          plugins {
-              id("com.android.application")
-              id("kotlin-android")
-              id("dev.flutter.flutter-gradle-plugin")
-              id("com.google.gms.google-services")
-          }
+          # Add google-services plugin
+          if "com.google.gms.google-services" not in content:
+              if ".kts" in build_file:
+                  content = content.replace(
+                      'id("dev.flutter.flutter-gradle-plugin")',
+                      'id("dev.flutter.flutter-gradle-plugin")\n    id("com.google.gms.google-services")'
+                  )
+              else:
+                  content = content.replace(
+                      'id "dev.flutter.flutter-gradle-plugin"',
+                      'id "dev.flutter.flutter-gradle-plugin"\n    id "com.google.gms.google-services"'
+                  )
 
-          val localProperties = java.util.Properties()
-          val localPropertiesFile = rootProject.file("local.properties")
-          if (localPropertiesFile.exists()) {
-              localPropertiesFile.reader(Charsets.UTF_8).use { reader ->
-                  localProperties.load(reader)
-              }
-          }
+          # Change namespace and applicationId
+          content = content.replace('"com.takweela.takweela"', '"com.takweela.app"')
 
-          val flutterVersionCode = localProperties.getProperty("flutter.versionCode") ?: "1"
-          val flutterVersionName = localProperties.getProperty("flutter.versionName") ?: "1.0"
+          # Set minSdk to 23
+          content = re.sub(r'minSdk\s*=\s*flutter\.minSdkVersion', 'minSdk = 23', content)
+          content = re.sub(r"minSdk\s+flutter\.minSdkVersion", "minSdk 23", content)
 
-          android {
-              namespace = "com.takweela.app"
-              compileSdk = 35
-              ndkVersion = flutter.ndkVersion
+          # Add multiDexEnabled
+          if "multiDexEnabled" not in content:
+              content = content.replace(
+                  'versionName = flutterVersionName',
+                  'versionName = flutterVersionName\n        multiDexEnabled = true'
+              )
+              content = content.replace(
+                  'versionName flutterVersionName\n',
+                  'versionName flutterVersionName\n        multiDexEnabled true\n'
+              )
 
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = "17"
-              }
-
-              defaultConfig {
-                  applicationId = "com.takweela.app"
-                  minSdk = 23
-                  targetSdk = 35
-                  versionCode = flutterVersionCode.toInt()
-                  versionName = flutterVersionName
-                  multiDexEnabled = true
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig = signingConfigs.getByName("debug")
-                      isMinifyEnabled = false
-                      isShrinkResources = false
-                  }
-                  debug {
-                      signingConfig = signingConfigs.getByName("debug")
-                  }
-              }
-          }
-
-          flutter {
-              source = "../.."
-          }
-
+          # Add Firebase dependencies
+          if "firebase-bom" not in content:
+              if ".kts" in build_file:
+                  firebase_deps = '''
           dependencies {
               implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
               implementation("com.google.firebase:firebase-firestore")
               implementation("androidx.multidex:multidex:2.0.1")
           }
-          BUILDKTS
-
-          elif [ -f "android/app/build.gradle" ]; then
-            BUILD_FILE="android/app/build.gradle"
-            echo "Found Groovy build file"
-
-            cat > "$BUILD_FILE" << 'BUILDGROOVY'
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-              id "com.google.gms.google-services"
-          }
-
-          def localProperties = new Properties()
-          def localPropertiesFile = rootProject.file('local.properties')
-          if (localPropertiesFile.exists()) {
-              localPropertiesFile.withReader('UTF-8') { reader ->
-                  localProperties.load(reader)
-              }
-          }
-
-          def flutterVersionCode = localProperties.getProperty('flutter.versionCode') ?: '1'
-          def flutterVersionName = localProperties.getProperty('flutter.versionName') ?: '1.0'
-
-          android {
-              namespace "com.takweela.app"
-              compileSdk 35
-              ndkVersion flutter.ndkVersion
-
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-
-              sourceSets {
-                  main.java.srcDirs += 'src/main/kotlin'
-              }
-
-              defaultConfig {
-                  applicationId "com.takweela.app"
-                  minSdk 23
-                  targetSdk 35
-                  versionCode flutterVersionCode.toInteger()
-                  versionName flutterVersionName
-                  multiDexEnabled true
-              }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                      minifyEnabled false
-                      shrinkResources false
-                  }
-                  debug {
-                      signingConfig signingConfigs.debug
-                  }
-              }
-          }
-
-          flutter {
-              source '../..'
-          }
-
+          '''
+                  content += "\n" + firebase_deps
+              else:
+                  firebase_deps = '''
           dependencies {
               implementation platform('com.google.firebase:firebase-bom:33.7.0')
               implementation 'com.google.firebase:firebase-firestore'
               implementation 'androidx.multidex:multidex:2.0.1'
           }
-          BUILDGROOVY
-          fi
+          '''
+                  content += "\n" + firebase_deps
 
-          # إضافة google-services plugin إلى settings
-          if [ -f "android/settings.gradle.kts" ]; then
-            if ! grep -q "com.google.gms.google-services" android/settings.gradle.kts; then
-              # إضافة في Kotlin DSL
-              echo '' >> android/settings.gradle.kts
-              echo 'plugins {' > /tmp/gms_plugin.txt
-              echo '    id("com.google.gms.google-services") version "4.4.2" apply false' >> /tmp/gms_plugin.txt
-              echo '}' >> /tmp/gms_plugin.txt
-              # نستخدم طريقة بديلة: نضيف السطر داخل block الـ plugins الموجود
-              python3 -c "
-          content = open('android/settings.gradle.kts').read()
-          # Find the last plugins block and add our plugin
-          if 'com.google.gms.google-services' not in content:
-              # Add before the last closing brace of plugins block
-              import re
-              # Find plugins blocks
-              pattern = r'(plugins\s*\{[^}]*)(})'
-              matches = list(re.finditer(pattern, content))
-              if matches:
-                  last = matches[-1]
-                  new_content = content[:last.end(1)] + '    id(\"com.google.gms.google-services\") version \"4.4.2\" apply false\n' + content[last.start(2):]
-                  open('android/settings.gradle.kts', 'w').write(new_content)
-                  print('Added google-services to settings.gradle.kts')
+          open(build_file, 'w').write(content)
+          print(f"Patched {build_file} successfully")
+
+          # === 2. Find and patch settings.gradle(.kts) ===
+          settings_files = glob.glob("android/settings.gradle*")
+          if not settings_files:
+              print("ERROR: No settings.gradle found!")
+              exit(1)
+
+          settings_file = settings_files[0]
+          print(f"Patching: {settings_file}")
+          content = open(settings_file).read()
+
+          if "com.google.gms.google-services" not in content:
+              if ".kts" in settings_file:
+                  # Find the plugins block that has com.android.application
+                  content = content.replace(
+                      'id("com.android.application")',
+                      'id("com.android.application")\n    id("com.google.gms.google-services") version "4.4.2" apply false'
+                  )
               else:
-                  print('Could not find plugins block, appending')
-                  content += '\nplugins {\n    id(\"com.google.gms.google-services\") version \"4.4.2\" apply false\n}\n'
-                  open('android/settings.gradle.kts', 'w').write(content)
-          "
-            fi
-          elif [ -f "android/settings.gradle" ]; then
-            if ! grep -q "com.google.gms.google-services" android/settings.gradle; then
-              python3 -c "
-          content = open('android/settings.gradle').read()
-          if 'com.google.gms.google-services' not in content:
-              import re
-              pattern = r'(plugins\s*\{[^}]*)(})'
-              matches = list(re.finditer(pattern, content))
-              if matches:
-                  last = matches[-1]
-                  new_content = content[:last.end(1)] + '    id \"com.google.gms.google-services\" version \"4.4.0\" apply false\n' + content[last.start(2):]
-                  open('android/settings.gradle', 'w').write(new_content)
-                  print('Added google-services to settings.gradle')
-          "
-            fi
-          fi
+                  content = content.replace(
+                      'id "com.android.application"',
+                      'id "com.android.application"\n    id "com.google.gms.google-services" version "4.4.2" apply false'
+                  )
 
-          echo "=== Final settings file ==="
-          cat "$SETTINGS_FILE"
-          echo ""
-          echo "=== Final build file ==="
-          cat "$BUILD_FILE"
+          open(settings_file, 'w').write(content)
+          print(f"Patched {settings_file} successfully")
+
+          # === 3. Print final files for debugging ===
+          print("\n=== FINAL build file ===")
+          print(open(build_file).read())
+          print("\n=== FINAL settings file ===")
+          print(open(settings_file).read())
+          PYEOF
 
       - name: Update AndroidManifest
         script: |
