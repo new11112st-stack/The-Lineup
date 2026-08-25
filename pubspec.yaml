@@ -23,7 +23,7 @@ dependencies:
 
   # Image picking & compression
   image_picker: ^1.1.2
-  flutter_image_compress: ^2.3.0
+  flutter_image_compress_lite: ^2.9.2
 
   # UI
   google_fonts: ^6.2.1
